@@ -1,0 +1,671 @@
+import json
+import math
+
+import pandas as pd
+import numpy as np
+import tgw
+import datetime as dt
+
+class MyLogSpi(tgw.ILogSpi):
+    def __init__(self) -> None:
+        super().__init__()
+        pass
+    def OnLog(self, level, log, len):
+        print("TGW log: level: {}     log:   {}".format(level, log.strip('\n').strip('\r')))
+
+    def OnLogon(self, data):
+        print("TGW Logon information:  : ")
+        print("api_mode : ", data.api_mode)
+        print("logon json : ", data.logon_json)
+
+# 第一步：设置日志spi，保证有日志输出
+log_spi = MyLogSpi()
+tgw.SetLogSpi(log_spi)
+# # 第二步，登录
+cfg = tgw.Cfg()
+cfg.server_vip = "101.230.159.234"
+cfg.server_port = 8600
+# cfg.username = "tgw_yh_test"  # 账号
+# cfg.password = "123456"  # 密码
+cfg.username = "300661909011"
+cfg.password = "yhzq@300661909011"
+success = tgw.Login(cfg, tgw.ApiMode.kInternetMode, './') #互联网模式初始化，可指定证书文件地址
+if not success:
+    print("login fail")
+    exit(0)
+
+root = './'
+return_DF = True
+
+class Deficit_Document():
+    def __init__(self, TOTAL_ASSETS, TOTAL_LIAB, CAP_STOCK, REPORTING_PERIOD):
+        self.TOTAL_ASSETS = TOTAL_ASSETS
+        self.TOTAL_LIAB = TOTAL_LIAB
+        self.CAP_STOCK = CAP_STOCK
+        self.REPORTING_PERIOD = REPORTING_PERIOD
+
+class Profit_Document():
+    def __init__(self, TOT_OPERA_REV, NET_PRO_INCL_MIN_INT_INC, TOT_COMPRE_INC_PARENT_COMP, REPORTING_PERIOD):
+        self.TOT_OPERA_REV = TOT_OPERA_REV
+        self.NET_PRO_INCL_MIN_INT_INC = NET_PRO_INCL_MIN_INT_INC
+        self.TOT_COMPRE_INC_PARENT_COMP = TOT_COMPRE_INC_PARENT_COMP
+        self.REPORTING_PERIOD = REPORTING_PERIOD
+
+class Cash_Flow_Sheet():
+    def __init__(self, NET_CASH_FLOWS_OPERA_ACT, REPORTING_PERIOD):
+        self.NET_CASH_FLOWS_OPERA_ACT = NET_CASH_FLOWS_OPERA_ACT
+        self.REPORTING_PERIOD = REPORTING_PERIOD
+
+
+# constants
+deviationMult = 1
+while(1):
+    date = input("Please enter date with format(YYYYMMDD): ")
+    if 20000000 <= int(date) <= 21000000:
+        break
+date_1year = str(int(date) - 10000)
+date_2year = str(int(date) - 20000)
+ratio_1_bar = 0.65
+ratio_2_bar = 0.15
+consecutive_bar = 0.15
+once_bar = 0.5
+ratio_3_bar = 0.28
+ratio_4_bar = 0.2
+ratio_6_bar = 0.18
+rsi_bar_1 = 42
+rsi_bar_2 = 28
+adx_bar_1 = 0.35
+adx_bar_2 = 0.6
+check_report = 0
+
+rsi_bar = 45
+un1 = 0
+un2 = 0
+uncon = 0
+un3_4 = 0
+un6 = 0
+unrsi = 0
+other = 0
+unsatisfication = list()
+result_1 = list()
+result_2 = list()
+
+taskid = tgw.GetTaskID()
+tgw.SetThirdInfoParam(taskid,"function_id","A010010006")
+tgw.SetThirdInfoParam(taskid,"start_date",date_1year)
+tgw.SetThirdInfoParam(taskid,"end_date",date)
+df, error = tgw.QueryThirdInfo(taskid,return_df_format=return_DF)
+codes = np.array(df["MARKET_CODE"])
+
+stock_set1 = list()
+stock_set2 = list()
+for i in range(len(codes)):
+    try:
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010060003")
+        tgw.SetThirdInfoParam(taskid, "market_code", codes[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        df, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+        pe = df.iloc[0].loc["VAL_PE"]
+        if 3.5 <= pe < 15:
+            stock_set1.append(codes[i])
+        elif 15 <= pe < 28:
+            stock_set2.append(codes[i])
+    except: continue
+stock_set1 = np.array(stock_set1)
+stock_set2 = np.array(stock_set2)
+
+def check_validation(value):
+    if math.isnan(value) or value == 0:
+        return False
+    else:
+        return True
+
+for i in range(len(stock_set1)):
+    try:
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010050001")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set1[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        deficit_documents, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+        deficit_document_list = list()
+        for j in range(len(deficit_documents)):
+            if int(deficit_documents.loc[j].loc["STATEMENT_TYPE"]) == 1:
+                temp = Deficit_Document(float(deficit_documents.loc[j].loc["TOTAL_ASSETS"]),float(deficit_documents.loc[j].loc["TOTAL_LIAB"]),float(deficit_documents.loc[j].loc["CAP_STOCK"]),deficit_documents.loc[j].loc["REPORTING_PERIOD"])
+                deficit_document_list.append(temp)
+
+        if check_validation(deficit_document_list[0].TOTAL_LIAB) and check_validation(deficit_document_list[0].TOTAL_ASSETS):
+            a = deficit_document_list[0].TOTAL_LIAB
+            b = deficit_document_list[0].TOTAL_ASSETS
+        else:
+            a = deficit_document_list[1].TOTAL_LIAB
+            b = deficit_document_list[1].TOTAL_ASSETS
+        ratio_1 = a / b
+        if not ratio_1 < ratio_1_bar:
+            un1 = un1 + 1
+            continue
+
+
+
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id","A010050002")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set1[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_2year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        profit_document_list = list()
+        profit_documents, error = tgw.QueryThirdInfo(taskid,return_df_format=return_DF)
+
+        for j in range(len(profit_documents)):
+            if int(profit_documents.loc[j].loc["STATEMENT_TYPE"]) == 1:
+                temp = Profit_Document(float(profit_documents.loc[j].loc["TOT_OPERA_REV"]),
+                                       float(profit_documents.loc[j].loc["NET_PRO_INCL_MIN_INT_INC"]),
+                                       float(profit_documents.loc[j].loc["TOT_COMPRE_INC_PARENT_COMP"]),
+                                       float(profit_documents.loc[j].loc["REPORTING_PERIOD"]))
+                profit_document_list.append(temp)
+
+        if check_validation(profit_document_list[0].NET_PRO_INCL_MIN_INT_INC) and check_validation(profit_document_list[0].TOT_OPERA_REV):
+            a = profit_document_list[0].NET_PRO_INCL_MIN_INT_INC
+            b = profit_document_list[0].TOT_OPERA_REV
+        else:
+            a = profit_document_list[1].NET_PRO_INCL_MIN_INT_INC
+            b = profit_document_list[1].TOT_OPERA_REV
+        ratio_2 = a / b
+        if not ratio_2 > ratio_2_bar:
+            un2 = un2 + 1
+            continue
+
+        r1 = (profit_document_list[0].NET_PRO_INCL_MIN_INT_INC - profit_document_list[4].NET_PRO_INCL_MIN_INT_INC) / profit_document_list[4].NET_PRO_INCL_MIN_INT_INC
+        r2 = (profit_document_list[1].NET_PRO_INCL_MIN_INT_INC - profit_document_list[5].NET_PRO_INCL_MIN_INT_INC) / profit_document_list[5].NET_PRO_INCL_MIN_INT_INC
+        r3 = (profit_document_list[2].NET_PRO_INCL_MIN_INT_INC - profit_document_list[6].NET_PRO_INCL_MIN_INT_INC) / profit_document_list[6].NET_PRO_INCL_MIN_INT_INC
+        if not ((r1 >= consecutive_bar and r2 >= consecutive_bar and r3 >= consecutive_bar) or r1 >= once_bar or (
+                r1 + r2 + r3 >= 2 and r1 > 0)):
+            uncon = uncon + 1
+            continue
+
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid,"function_id","A010050003")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set1[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        cash_flow_sheet_list = list()
+        cash_flow_sheets, error = tgw.QueryThirdInfo(taskid,return_df_format=return_DF)
+        for j in range(len(cash_flow_sheets)):
+            if int(cash_flow_sheets.loc[j].loc["STATEMENT_TYPE"]) == 1:
+                temp = Cash_Flow_Sheet(float(cash_flow_sheets.loc[j].loc["NET_CASH_FLOWS_OPERA_ACT"]), cash_flow_sheets.loc[j].loc["REPORTING_PERIOD"])
+                cash_flow_sheet_list.append(temp)
+
+        if check_validation(cash_flow_sheet_list[0].NET_CASH_FLOWS_OPERA_ACT):
+            a = cash_flow_sheet_list[0].NET_CASH_FLOWS_OPERA_ACT
+        else:
+            a = cash_flow_sheet_list[1].NET_CASH_FLOWS_OPERA_ACT
+        if not a > 0.05:
+            un3_4 = un3_4 + 1
+            continue
+
+        if check_validation(profit_document_list[0].TOT_COMPRE_INC_PARENT_COMP) and check_validation(deficit_document_list[0].CAP_STOCK):
+            a = profit_document_list[0].TOT_COMPRE_INC_PARENT_COMP
+            b = deficit_document_list[0].CAP_STOCK
+        else:
+            a = profit_document_list[1].TOT_COMPRE_INC_PARENT_COMP
+            b = deficit_document_list[1].CAP_STOCK
+        ratio_6 = 4 * (a / b)
+        if not ratio_6 >= ratio_6_bar:
+            un6 = un6 + 1
+            continue
+
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010060002")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set1[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        price_close, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+        prices = np.array(price_close["CLOSE"].loc[0:15])
+        gain = list()
+        lose = list()
+        for j in range(0, len(prices) - 1):
+            price_change = (prices[j] - prices[j + 1]) / prices[j + 1]
+            if price_change > 0:
+                gain.append(price_change)
+            elif price_change < 0:
+                lose.append(abs(price_change))
+        gain = np.array(gain).sum()
+        lose = np.array(lose).sum()
+        rs = gain / lose
+        rsi = 100 - (100 / (1 + rs))
+        if not rsi <= 45:
+            unrsi = unrsi + 1
+            continue
+
+        result_1.append(stock_set1[i])
+
+    except:
+        continue
+
+for i in range(len(stock_set2)):
+    try:
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010050001")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set2[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        deficit_documents, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+        deficit_document_list = list()
+        for j in range(len(deficit_documents)):
+            if int(deficit_documents.loc[j].loc["STATEMENT_TYPE"]) == 1:
+                temp = Deficit_Document(float(deficit_documents.loc[j].loc["TOTAL_ASSETS"]),
+                                        float(deficit_documents.loc[j].loc["TOTAL_LIAB"]),
+                                        float(deficit_documents.loc[j].loc["CAP_STOCK"]),
+                                        deficit_documents.loc[j].loc["REPORTING_PERIOD"])
+                deficit_document_list.append(temp)
+
+        if check_validation(deficit_document_list[0].TOTAL_LIAB) and check_validation(
+                deficit_document_list[0].TOTAL_ASSETS):
+            a = deficit_document_list[0].TOTAL_LIAB
+            b = deficit_document_list[0].TOTAL_ASSETS
+        else:
+            a = deficit_document_list[1].TOTAL_LIAB
+            b = deficit_document_list[1].TOTAL_ASSETS
+        ratio_1 = a / b
+        if not ratio_1 < ratio_1_bar:
+            un1 = un1 + 1
+            continue
+
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010050002")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set2[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_2year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        profit_document_list = list()
+        profit_documents, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+
+        for j in range(len(profit_documents)):
+            if int(profit_documents.loc[j].loc["STATEMENT_TYPE"]) == 1:
+                temp = Profit_Document(float(profit_documents.loc[j].loc["TOT_OPERA_REV"]),
+                                       float(profit_documents.loc[j].loc["NET_PRO_INCL_MIN_INT_INC"]),
+                                       float(profit_documents.loc[j].loc["TOT_COMPRE_INC_PARENT_COMP"]),
+                                       float(profit_documents.loc[j].loc["REPORTING_PERIOD"]))
+                profit_document_list.append(temp)
+
+        if check_validation(profit_document_list[0].NET_PRO_INCL_MIN_INT_INC) and check_validation(
+                profit_document_list[0].TOT_OPERA_REV):
+            a = profit_document_list[0].NET_PRO_INCL_MIN_INT_INC
+            b = profit_document_list[0].TOT_OPERA_REV
+        else:
+            a = profit_document_list[1].NET_PRO_INCL_MIN_INT_INC
+            b = profit_document_list[1].TOT_OPERA_REV
+        ratio_2 = a / b
+        if not ratio_2 > ratio_2_bar:
+            un2 = un2 + 1
+            continue
+
+        r1 = (profit_document_list[0].NET_PRO_INCL_MIN_INT_INC - profit_document_list[4].NET_PRO_INCL_MIN_INT_INC) / \
+             profit_document_list[4].NET_PRO_INCL_MIN_INT_INC
+        r2 = (profit_document_list[1].NET_PRO_INCL_MIN_INT_INC - profit_document_list[5].NET_PRO_INCL_MIN_INT_INC) / \
+             profit_document_list[5].NET_PRO_INCL_MIN_INT_INC
+        r3 = (profit_document_list[2].NET_PRO_INCL_MIN_INT_INC - profit_document_list[6].NET_PRO_INCL_MIN_INT_INC) / \
+             profit_document_list[6].NET_PRO_INCL_MIN_INT_INC
+        if not ((r1 >= consecutive_bar and r2 >= consecutive_bar and r3 >= consecutive_bar) or r1 >= once_bar or (
+                r1 + r2 + r3 >= 2 and r1 > 0)):
+            uncon = uncon + 1
+            continue
+
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010050003")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set2[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        cash_flow_sheet_list = list()
+        cash_flow_sheets, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+        for j in range(len(cash_flow_sheets)):
+            if int(cash_flow_sheets.loc[j].loc["STATEMENT_TYPE"]) == 1:
+                temp = Cash_Flow_Sheet(float(cash_flow_sheets.loc[j].loc["NET_CASH_FLOWS_OPERA_ACT"]),
+                                       cash_flow_sheets.loc[j].loc["REPORTING_PERIOD"])
+                cash_flow_sheet_list.append(temp)
+
+        if check_validation(cash_flow_sheet_list[0].NET_CASH_FLOWS_OPERA_ACT):
+            a = cash_flow_sheet_list[0].NET_CASH_FLOWS_OPERA_ACT
+        else:
+            a = cash_flow_sheet_list[1].NET_CASH_FLOWS_OPERA_ACT
+        if not a > 0.05:
+            un3_4 = un3_4 + 1
+            continue
+
+        if check_validation(profit_document_list[0].TOT_COMPRE_INC_PARENT_COMP) and check_validation(
+                deficit_document_list[0].CAP_STOCK):
+            a = profit_document_list[0].TOT_COMPRE_INC_PARENT_COMP
+            b = deficit_document_list[0].CAP_STOCK
+        else:
+            a = profit_document_list[1].TOT_COMPRE_INC_PARENT_COMP
+            b = deficit_document_list[1].CAP_STOCK
+        ratio_6 = 4 * (a / b)
+        if not ratio_6 >= ratio_6_bar:
+            un6 = un6 + 1
+            continue
+
+        taskid = tgw.GetTaskID()
+        tgw.SetThirdInfoParam(taskid, "function_id", "A010060002")
+        tgw.SetThirdInfoParam(taskid, "market_code", stock_set2[i])
+        tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+        tgw.SetThirdInfoParam(taskid, "end_date", date)
+        price_close, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+        prices = np.array(price_close["CLOSE"].loc[0:15])
+        gain = list()
+        lose = list()
+        for j in range(0, len(prices) - 1):
+            price_change = (prices[j] - prices[j + 1]) / prices[j + 1]
+            if price_change > 0:
+                gain.append(price_change)
+            elif price_change < 0:
+                lose.append(abs(price_change))
+        gain = np.array(gain).sum()
+        lose = np.array(lose).sum()
+        rs = gain / lose
+        rsi = 100 - (100 / (1 + rs))
+        if not rsi <= 45:
+            unrsi = unrsi + 1
+            continue
+        result_2.append(stock_set2[i])
+
+    except:
+        continue
+
+unsatisfication.append(un1)
+unsatisfication.append(un2)
+unsatisfication.append(uncon)
+unsatisfication.append(un3_4)
+unsatisfication.append(un6)
+unsatisfication.append(unrsi)
+unsatisfication.append(other)
+unsatisfication = np.array(unsatisfication)
+
+def getATR(close, high, low):
+    try:
+        tr = list()
+        for i in range(59):
+            tr.append(max(high[i] - low[i], abs(high[i] - close[i + 1]), abs(low[i] - close[i + 1])))
+        return np.array(tr).mean()
+    except:
+        return 0
+
+
+def getEMA(close, high, low):
+    try:
+        ema_20 = list()
+        ema_50 = list()
+        for i in range(1, 21):
+            mean = (close[i] + high[i] + low[i]) / 3
+            ema_20.append((21 - i) * mean / 210)
+        for i in range(1, 51):
+            mean = (close[i] + high[i] + low[i]) / 3
+            ema_50.append((51 - i) * mean / 1275)
+        ema_20 = np.array(ema_20).sum()
+        ema_50 = np.array(ema_50).sum()
+        result = -1
+        if close[0] > ema_50:
+            result = 1
+        if close[0] > ema_20:
+            result = 2
+        return result
+    except:
+        return 0
+
+
+def getRSI(close):
+    try:
+        gain = list()
+        lose = list()
+        for i in range(0, 19):
+            price_change = (close[i] - close[i + 1]) / close[i + 1]
+            if price_change > 0:
+                gain.append(price_change)
+            elif price_change < 0:
+                lose.append(abs(price_change))
+        gain = np.array(gain).sum()
+        lose = np.array(lose).sum()
+        rs = gain / lose
+        rsi = 100 - (100 / (1 + rs))
+        result = 0
+        if rsi < rsi_bar_1:
+            result = result + 1
+        if rsi < rsi_bar_2:
+            result = result + 1
+        return result
+    except:
+        return 0
+
+
+def getMACD(close):
+    try:
+        ema_15 = np.zeros(13)
+        ema_40 = np.zeros(13)
+        for i in range(13):
+            for j in range(15):
+                ema_15[i] = ema_15[i] + (15 - j) * close[i + j] / 120
+        for i in range(13):
+            for j in range(40):
+                ema_40[i] = ema_40[i] + (40 - j) * close[i + j] / 820
+        macd = ema_15 - ema_40
+        signal = np.zeros(4)
+        for i in range(4):
+            for j in range(10):
+                signal[i] = signal[i] + (10 - j) * macd[i + j] / 55
+        macd_bar = macd[0:4] - signal
+        if macd_bar[2] < 0 and macd_bar[1] > 0 and macd_bar[0] > 0:
+            return 2
+        elif macd_bar[2] > 0 and macd_bar[1] < 0 and macd_bar[0] < 0:
+            return -2
+        elif macd_bar[3] < 0 and macd_bar[2] > 0 and macd_bar[1] > 0 and macd_bar[0] > 0:
+            return 1
+        elif macd_bar[3] > 0 and macd_bar[2] < 0 and macd_bar[1] < 0 and macd_bar[0] < 0:
+            return -1
+        else:
+            return 0
+    except:
+        return 0
+
+
+def getBBands(close):
+    try:
+        ma_30 = np.array(close[0:30]).mean()
+        ma_60 = np.array(close[0:]).mean()
+        sd_30 = np.array(close[0:30]).std()
+        sd_60 = np.array(close[0:]).std()
+        up_30 = ma_30 + 1.1 * sd_30
+        down_30 = ma_30 - 1.1 * sd_30
+        up_60 = ma_60 + 1.1 * sd_60
+        down_60 = ma_60 - 1.1 * sd_60
+        result = 0
+        if up_30 > up_60: result = result + 1
+        deviation = close[0] - close[4]
+        if deviation > 0.6 * sd_30:
+            result = result + 1
+        elif deviation < 0 and abs(deviation) > 0.5 * sd_30:
+            result = result - 1
+        deviation = close[0] - close[2]
+        if deviation >= 0:
+            if deviation > 1.1 * sd_30 and close[0] > up_30: result = result + 2
+        else:
+            deviation = abs(deviation)
+            if deviation > 1.1 * sd_30 and close[0] < down_30: result = result - 2
+        return result
+    except:
+        return 0
+
+
+def getPNL(close):
+    try:
+        ma = np.array(close).mean()
+        if close[0] / close[89] <= 0.382 or close[0] / ma <= 0.681:
+            return 1
+        elif close[0] / close[89] <= 0.681 or close[0] / ma <= 0.382:
+            return 2
+        elif close[0] / close[89] >= 1.382 or close[0] / ma >= 1.681:
+            return -1
+        elif close[0] / close[89] >= 1.681 or close[0] / ma >= 1.382:
+            return -2
+        else:
+            return 0
+    except:
+        return 0
+
+
+def getCCI(close, high, low):
+    try:
+        tp = (np.array(close) + np.array(high) + np.array(low)) / 3
+        ma = np.zeros(30)
+        for i in range(30):
+            ma[i] = np.array(close[i:i + 30]).mean()
+        md = np.array(abs(ma - tp[0:30])).mean()
+        cci = (tp[0] - ma[0]) / (0.015 * md)
+        if cci > 100:
+            return -1
+        elif cci < -100:
+            return 1
+        else:
+            return 0
+    except:
+        return 0
+
+
+def getADX(close, high, low):
+    try:
+        tr = np.zeros(30)
+        dm_p = np.zeros(30)
+        dm_n = np.zeros(30)
+        for i in range(30):
+            tr[i] = max(high[i] - low[i], abs(high[i] - close[i + 1]), abs(low[i] - close[i + 1]))
+            dm_positive = high[i] - high[i + 1]
+            dm_negative = low[i] - low[i + 1]
+            if dm_positive <= 0 and dm_negative >= 0:
+                dm_p[i] = 0
+                dm_n[i] = 0
+            elif dm_positive >= 0 and dm_negative <= 0 and dm_positive >= -dm_negative:
+                dm_p[i] = dm_positive
+                dm_n[i] = 0
+            elif dm_positive >= 0 and dm_negative <= 0 and dm_positive < -dm_negative:
+                dm_n[i] = abs(dm_negative)
+                dm_p[i] = 0
+            elif dm_positive >= 0 and dm_negative >= 0:
+                dm_p[i] = dm_positive
+                dm_n[i] = 0
+            elif dm_positive <= 0 and dm_negative <= 0:
+                dm_n[i] = abs(dm_negative)
+                dm_p[i] = 0
+        atr = np.zeros(15)
+        di_positive = np.zeros(15)
+        di_negative = np.zeros(15)
+        for i in range(15):
+            for j in range(15):
+                atr[i] = atr[i] + (15 - j) * tr[i + j] / 120
+                di_positive[i] = di_positive[i] + (15 - j) * dm_p[i + j] / 20
+                di_negative[i] = di_negative[i] + (15 - j) * dm_n[i + j] / 20
+        adx = 0
+        for i in range(15):
+            dx = abs(di_positive[i] - di_negative[i]) / abs(di_positive[i] + di_negative[i])
+            adx = adx + (15 - i) * dx / 120
+        if adx_bar_1 <= adx <= adx_bar_2:
+            return 1
+        elif adx > adx_bar_2:
+            return 2
+        else:
+            return 0
+    except:
+        return 0
+
+
+def getVO(turnover):
+    try:
+        turnover_120 = np.array(turnover).sum()
+        turnover_3 = turnover[0] + turnover[1] + turnover[2]
+        if turnover_120 > 40 * turnover_3:
+            return 1
+        elif turnover_120 < 40 * turnover_3:
+            return -1
+        else:
+            return 0
+    except:
+        return 0
+def getIndicators(code):
+    taskid = tgw.GetTaskID()
+    tgw.SetThirdInfoParam(taskid, "function_id", "A010060002")
+    tgw.SetThirdInfoParam(taskid, "market_code", code)
+    tgw.SetThirdInfoParam(taskid, "start_date", date_1year)
+    tgw.SetThirdInfoParam(taskid, "end_date", date)
+    price_close, error = tgw.QueryThirdInfo(taskid, return_df_format=return_DF)
+    close_60 = np.array(price_close["CLOSE"].loc[0:60])
+    close_180 = np.array(price_close["CLOSE"].loc[0:180])
+    high_60 = np.array(price_close["HIGH"].loc[0:60])
+    low_60 = np.array(price_close["LOW"].loc[0:60])
+    turnover_60 = np.array(price_close["TURN_OVER"].loc[0:60])
+    volume_14 = np.array(price_close["VOLUME"].loc[0:14])
+    volume = math.floor(volume_14.mean() * 0.02)
+    atr = getATR(close_60, high_60, low_60)
+    ema = getEMA(close_60, high_60, low_60)
+    rsi = getRSI(close_60)
+    bbands = getBBands(close_60)
+    pnl = getPNL(close_180)
+    macd = getMACD(close_60)
+    cci = getCCI(close_60, high_60, low_60)
+    adx = getADX(close_60, high_60, low_60)
+    vo = getVO(turnover_60)
+    return code, atr, (ema + rsi + bbands + pnl + macd + cci + adx + vo), volume
+
+class Rate:
+    def __init__(self, code, atr, rate, volume):
+        self.code = code
+        self.atr = atr
+        self.rate = rate
+        self.volume = volume
+
+result_stocks_1 = list()
+result_stocks_2 = list()
+for i in range(len(result_1)):
+    try:
+        code, atr, rate, volume = getIndicators(result_1[i])
+        tuple = Rate(code, atr, rate, volume)
+        result_stocks_1.append(tuple)
+    except: continue
+for i in range(len(result_2)):
+    try:
+        code, atr, rate, volume = getIndicators(result_2[i])
+        tuple = Rate(code, atr, rate, volume)
+        result_stocks_2.append(tuple)
+    except: continue
+result_stocks_1 = sorted(result_stocks_1, key=lambda x: x.atr)
+result_stocks_2 = sorted(result_stocks_2, key=lambda x: x.atr)
+for i in range(math.floor(len(result_stocks_1) / 4) + 1, 2 * math.floor(len(result_stocks_1) / 4)):
+    result_stocks_1[i].rate = result_stocks_1[i].rate * 1.1
+for i in range(2 * math.floor(len(result_stocks_1) / 4) + 1, 3 * math.floor(len(result_stocks_1) / 4)):
+    result_stocks_1[i].rate = result_stocks_1[i].rate * 1.2
+for i in range(3 * math.floor(len(result_stocks_1) / 4) + 1, len(result_stocks_1)):
+    result_stocks_1[i].rate = result_stocks_1[i].rate * 1.3
+
+for i in range(math.floor(len(result_stocks_2) / 4) + 1, 2 * math.floor(len(result_stocks_2) / 4)):
+    result_stocks_2[i].rate = result_stocks_2[i].rate * 1.1
+for i in range(2 * math.floor(len(result_stocks_2) / 4) + 1, 3 * math.floor(len(result_stocks_2) / 4)):
+    result_stocks_2[i].rate = result_stocks_2[i].rate * 1.2
+for i in range(3 * math.floor(len(result_stocks_2) / 4) + 1, len(result_stocks_2)):
+    result_stocks_2[i].rate = result_stocks_2[i].rate * 1.3
+
+result_stocks_1 = sorted(result_stocks_1, key=lambda x: x.rate, reverse=True)
+result_stocks_2 = sorted(result_stocks_2, key=lambda x: x.rate, reverse=True)
+filename1 = f'stock_set_1_' + str(date) + '.json'
+filename2 = f'stock_set_2_' + str(date) + '.json'
+
+l1 = list()
+l2 = list()
+for i in range(len(result_stocks_1)):
+    temp = {"code":str(result_stocks_1[i].code),  "rate":str(result_stocks_1[i].rate), "volume":str(result_stocks_1[i].volume)}
+    l1.append(temp)
+for i in range(len(result_stocks_2)):
+    temp = {"code":str(result_stocks_2[i].code), "rate":str(result_stocks_2[i].rate), "volume":str(result_stocks_2[i].volume)}
+    l2.append(temp)
+
+with open(filename1, "w") as write_f:
+    json.dump(l1, write_f, indent=4)
+with open(filename2, "w") as write_f:
+    json.dump(l2, write_f, indent=4)
+
+tgw.Close()
